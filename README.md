@@ -1,6 +1,11 @@
 # GitHub README 图片弹层预览（Chrome / Edge 插件版）
 
-## 安装
+
+<p align="center">
+  <img src=".\icon.svg" width="120" />
+</p>
+
+### 安装
 1. 打开浏览器扩展管理页：
    - Chrome: `chrome://extensions`
    - Edge: `edge://extensions`
@@ -8,7 +13,7 @@
 3. 点击 **加载已解压的扩展程序**
 4. 选择当前文件夹 `github-readme`
 
-## 功能
+### 功能
 - 点击 GitHub README 中的图片，直接弹层预览
 - 支持滚轮缩放
 - 支持拖拽平移
@@ -16,7 +21,7 @@
 - 支持打开原图或原链接
 - `Esc` 关闭，`0` 重置，`+/-` 缩放
 
-## 文件说明
+### 文件说明
 - `manifest.json`：扩展配置
 - `content.js`：主逻辑，注入到 GitHub 页面运行
 

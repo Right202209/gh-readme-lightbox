@@ -5,6 +5,9 @@
   <img src=".\icon.svg" width="120" />
 </p>
 
+<p align="center">
+  <img src="./prtSc.png" width="700"/>
+</p>
 ### 安装
 1. 打开浏览器扩展管理页：
    - Chrome: `chrome://extensions`

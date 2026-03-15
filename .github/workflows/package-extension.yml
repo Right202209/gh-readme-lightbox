@@ -1,0 +1,59 @@
+name: Package extension
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required files
+        run: |
+          node -e "const fs=require('fs'); const m=JSON.parse(fs.readFileSync('manifest.json','utf8')); if(m.manifest_version!==3){console.error('manifest_version must be 3'); process.exit(1);} for (const f of ['content.js','popup.html','popup.js']){ if(!fs.existsSync(f)){console.error('Missing '+f); process.exit(1);} }"
+
+      - name: Set zip name
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "ZIP_NAME=gh-readme-lightbox-${{ github.ref_name }}.zip" >> "$GITHUB_ENV"
+          else
+            echo "ZIP_NAME=gh-readme-lightbox-${{ github.sha }}.zip" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create zip
+        run: |
+          mkdir -p dist
+          zip -r "dist/$ZIP_NAME" . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x ".claude/*" \
+            -x "dist/*" \
+            -x ".gitignore" \
+            -x "*.md" \
+            -x "prtSc.png"
+
+      - name: Generate checksums
+        run: |
+          sha256sum "dist/$ZIP_NAME" > dist/SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: dist/*
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/${{ env.ZIP_NAME }}
+            dist/SHA256SUMS

@@ -11,6 +11,18 @@
   const MIN_SCALE_FLOOR = 0.05;
   const MIN_SCALE_RATIO = 0.35;
 
+  let directOpenLink = false;
+
+  chrome.storage.sync.get({ directOpenLink: false }, (result) => {
+    directOpenLink = result.directOpenLink;
+  });
+
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.directOpenLink) {
+      directOpenLink = changes.directOpenLink.newValue;
+    }
+  });
+
   const state = {
     scale: 1,
     fitScale: 1,
@@ -24,7 +36,13 @@
     pointerId: null,
     previewSrc: '',
     originalLink: '',
-    originalLabel: ''
+    originalLabel: '',
+    galleryItems: [],
+    galleryIndex: 0,
+    pointerMode: null,
+    pointerStartX: 0,
+    pointerStartY: 0,
+    pointerStartTime: 0
   };
 
   function injectStyle() {
@@ -68,6 +86,10 @@
         touch-action: none;
         cursor: grab;
         user-select: none;
+      }
+
+      #${OVERLAY_ID} .ghrl-stage.is-light {
+        background: rgba(255, 255, 255, 0.85);
       }
 
       #${OVERLAY_ID} .ghrl-stage.is-dragging {
@@ -281,6 +303,54 @@
     return true;
   }
 
+  function buildGalleryItemsForTarget(targetImg) {
+    const images = Array.from(document.querySelectorAll('article.markdown-body img'));
+    const items = [];
+    let targetIndex = -1;
+
+    images.forEach(img => {
+      if (!isReadmeImage(img)) return;
+
+      const link = img.closest('a[href]');
+      const previewSrc = resolvePreviewSource(img, link);
+      if (!previewSrc) return;
+
+      const originalLink = link?.href || '';
+      const label = img.alt || originalLink || previewSrc;
+      const nextIndex = items.length;
+
+      if (img === targetImg) {
+        targetIndex = nextIndex;
+      }
+
+      items.push({
+        previewSrc,
+        originalLink,
+        label
+      });
+    });
+
+    if (targetIndex < 0) targetIndex = 0;
+
+    return { items, targetIndex };
+  }
+
+  function clampGalleryIndex(index) {
+    if (!state.galleryItems.length) return 0;
+    return Math.min(state.galleryItems.length - 1, Math.max(0, index));
+  }
+
+  function openOverlayAtIndex(index) {
+    if (!state.galleryItems.length) return;
+
+    const nextIndex = clampGalleryIndex(index);
+    const item = state.galleryItems[nextIndex];
+    if (!item) return;
+
+    state.galleryIndex = nextIndex;
+    openOverlay(item.previewSrc, item.originalLink, item.label);
+  }
+
   function getElements() {
     const overlay = document.getElementById(OVERLAY_ID);
     return {
@@ -294,7 +364,9 @@
       title: overlay?.querySelector('.ghrl-title'),
       zoom: overlay?.querySelector('.ghrl-zoom'),
       openImage: overlay?.querySelector('.ghrl-open-image'),
-      openLink: overlay?.querySelector('.ghrl-open-link')
+      openLink: overlay?.querySelector('.ghrl-open-link'),
+      copy: overlay?.querySelector('.ghrl-copy'),
+      bgToggle: overlay?.querySelector('.ghrl-bg-toggle')
     };
   }
 
@@ -313,15 +385,28 @@
     image.style.transform = `scale(${state.scale})`;
   }
 
-  function clampOffsets() {
+  function getPanBounds() {
     const { stage } = getElements();
-    if (!stage || !state.naturalWidth || !state.naturalHeight) return;
+    if (!stage || !state.naturalWidth || !state.naturalHeight) {
+      return { maxOffsetX: 0, maxOffsetY: 0 };
+    }
 
     const scaledWidth = state.naturalWidth * state.scale;
     const scaledHeight = state.naturalHeight * state.scale;
 
-    const maxOffsetX = Math.max(0, (scaledWidth - stage.clientWidth) / 2);
-    const maxOffsetY = Math.max(0, (scaledHeight - stage.clientHeight) / 2);
+    return {
+      maxOffsetX: Math.max(0, (scaledWidth - stage.clientWidth) / 2),
+      maxOffsetY: Math.max(0, (scaledHeight - stage.clientHeight) / 2)
+    };
+  }
+
+  function canPan() {
+    const { maxOffsetX, maxOffsetY } = getPanBounds();
+    return maxOffsetX > 0 || maxOffsetY > 0;
+  }
+
+  function clampOffsets() {
+    const { maxOffsetX, maxOffsetY } = getPanBounds();
 
     state.offsetX = Math.min(maxOffsetX, Math.max(-maxOffsetX, state.offsetX));
     state.offsetY = Math.min(maxOffsetY, Math.max(-maxOffsetY, state.offsetY));
@@ -404,8 +489,62 @@
     if (stage) stage.classList.remove('is-dragging');
   }
 
+  function copyImage() {
+    const { copy } = getElements();
+    if (!state.previewSrc || !copy) return;
+
+    const originalText = copy.textContent;
+
+    function showFeedback(text, duration) {
+      copy.textContent = text;
+      setTimeout(() => { copy.textContent = originalText; }, duration);
+    }
+
+    fetch(state.previewSrc)
+      .then(res => {
+        if (!res.ok) throw new Error('fetch failed');
+        return res.blob();
+      })
+      .then(blob => {
+        if (blob.type === 'image/png') return blob;
+
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            canvas.toBlob(pngBlob => {
+              if (pngBlob) resolve(pngBlob);
+              else reject(new Error('canvas toBlob failed'));
+            }, 'image/png');
+            URL.revokeObjectURL(img.src);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(img.src);
+            reject(new Error('image decode failed'));
+          };
+          img.src = URL.createObjectURL(blob);
+        });
+      })
+      .then(pngBlob => navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': pngBlob })
+      ]))
+      .then(() => showFeedback('已复制', 1500))
+      .catch(() => showFeedback('复制失败', 1500));
+  }
+
+  function toggleBackground() {
+    const { stage, bgToggle } = getElements();
+    if (!stage || !bgToggle) return;
+
+    stage.classList.toggle('is-light');
+    bgToggle.textContent = stage.classList.contains('is-light') ? '深色背景' : '浅色背景';
+  }
+
   function closeOverlay() {
-    const { overlay, image, loading, error, stage } = getElements();
+    const { overlay, image, loading, error, stage, bgToggle } = getElements();
     if (!overlay) return;
 
     overlay.hidden = true;
@@ -419,6 +558,9 @@
 
     stopDragging();
 
+    if (stage) stage.classList.remove('is-light');
+    if (bgToggle) bgToggle.textContent = '浅色背景';
+
     state.previewSrc = '';
     state.originalLink = '';
     state.originalLabel = '';
@@ -428,6 +570,10 @@
     state.fitScale = 1;
     state.offsetX = 0;
     state.offsetY = 0;
+    state.pointerMode = null;
+    state.pointerStartX = 0;
+    state.pointerStartY = 0;
+    state.pointerStartTime = 0;
 
     if (image) {
       image.removeAttribute('src');
@@ -463,6 +609,8 @@
           <div class="ghrl-actions">
             <a class="ghrl-btn ghrl-open-image" target="_blank" rel="noreferrer noopener">新标签打开图片</a>
             <a class="ghrl-btn ghrl-open-link" target="_blank" rel="noreferrer noopener" hidden>打开原链接</a>
+            <button type="button" class="ghrl-btn ghrl-copy">复制图片</button>
+            <button type="button" class="ghrl-btn ghrl-bg-toggle">浅色背景</button>
             <button type="button" class="ghrl-btn ghrl-reset">重置</button>
             <button type="button" class="ghrl-btn ghrl-close">关闭</button>
           </div>
@@ -486,29 +634,79 @@
     stage.addEventListener('pointerdown', function (event) {
       if (event.button !== 0) return;
 
-      state.dragging = true;
-      state.pointerId = event.pointerId;
-      state.lastClientX = event.clientX;
-      state.lastClientY = event.clientY;
-      stage.classList.add('is-dragging');
-      stage.setPointerCapture(event.pointerId);
+      state.pointerStartX = event.clientX;
+      state.pointerStartY = event.clientY;
+      state.pointerStartTime = Date.now();
+
+      const canSwipe =
+        state.naturalWidth > 0 &&
+        state.naturalHeight > 0 &&
+        !canPan() &&
+        state.galleryItems.length > 1;
+
+      state.pointerMode = canSwipe ? 'swipe' : 'pan';
+
+      if (state.pointerMode === 'pan') {
+        state.dragging = true;
+        state.pointerId = event.pointerId;
+        state.lastClientX = event.clientX;
+        state.lastClientY = event.clientY;
+        stage.classList.add('is-dragging');
+        stage.setPointerCapture(event.pointerId);
+      } else {
+        state.dragging = false;
+        state.pointerId = event.pointerId;
+        stage.setPointerCapture(event.pointerId);
+      }
     });
 
     stage.addEventListener('pointermove', function (event) {
-      if (!state.dragging || event.pointerId !== state.pointerId) return;
+      if (event.pointerId !== state.pointerId) return;
 
-      state.offsetX += event.clientX - state.lastClientX;
-      state.offsetY += event.clientY - state.lastClientY;
-      state.lastClientX = event.clientX;
-      state.lastClientY = event.clientY;
+      if (state.pointerMode === 'pan') {
+        if (!state.dragging) return;
 
-      clampOffsets();
-      updateTransform();
+        state.offsetX += event.clientX - state.lastClientX;
+        state.offsetY += event.clientY - state.lastClientY;
+        state.lastClientX = event.clientX;
+        state.lastClientY = event.clientY;
+
+        clampOffsets();
+        updateTransform();
+      }
     });
 
-    stage.addEventListener('pointerup', stopDragging);
-    stage.addEventListener('pointercancel', stopDragging);
-    stage.addEventListener('lostpointercapture', stopDragging);
+    stage.addEventListener('pointerup', function (event) {
+      if (event.pointerId !== state.pointerId) return;
+
+      if (state.pointerMode === 'swipe') {
+        const dx = event.clientX - state.pointerStartX;
+        const dy = event.clientY - state.pointerStartY;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+
+        if (absDx >= 70 && absDx >= absDy * 1.2) {
+          if (dx < 0) {
+            openOverlayAtIndex(state.galleryIndex + 1);
+          } else if (dx > 0) {
+            openOverlayAtIndex(state.galleryIndex - 1);
+          }
+        }
+      }
+
+      state.pointerMode = null;
+      stopDragging();
+    });
+
+    stage.addEventListener('pointercancel', function () {
+      state.pointerMode = null;
+      stopDragging();
+    });
+
+    stage.addEventListener('lostpointercapture', function () {
+      state.pointerMode = null;
+      stopDragging();
+    });
 
     stage.addEventListener('dblclick', function (event) {
       event.preventDefault();
@@ -535,32 +733,71 @@
     });
 
     overlay.querySelector('.ghrl-reset').addEventListener('click', resetView);
+    overlay.querySelector('.ghrl-copy').addEventListener('click', copyImage);
+    overlay.querySelector('.ghrl-bg-toggle').addEventListener('click', toggleBackground);
 
     document.addEventListener('keydown', function (event) {
       const root = document.getElementById(OVERLAY_ID);
       if (!root || root.hidden) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
         closeOverlay();
         return;
       }
 
       if (event.key === '0') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
         resetView();
         return;
       }
 
       if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
         const rect = stage.getBoundingClientRect();
         zoomBy(1, rect.left + rect.width / 2, rect.top + rect.height / 2);
         return;
       }
 
       if (event.key === '-') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
         const rect = stage.getBoundingClientRect();
         zoomBy(-1, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return;
       }
-    });
+
+      if (event.key === 'c' || event.key === 'C') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        copyImage();
+        return;
+      }
+
+      if (event.key === 'b' || event.key === 'B') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        toggleBackground();
+        return;
+      }
+
+      if (state.galleryItems.length > 1 && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        openOverlayAtIndex(state.galleryIndex - 1);
+        return;
+      }
+
+      if (state.galleryItems.length > 1 && event.key === 'ArrowRight') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        openOverlayAtIndex(state.galleryIndex + 1);
+      }
+    }, true);
 
     window.addEventListener('resize', function () {
       const root = document.getElementById(OVERLAY_ID);
@@ -597,8 +834,16 @@
     state.fitScale = 1;
     state.offsetX = 0;
     state.offsetY = 0;
+    state.pointerMode = null;
+    state.pointerStartX = 0;
+    state.pointerStartY = 0;
+    state.pointerStartTime = 0;
 
-    title.textContent = label || previewSrc;
+    const total = state.galleryItems.length;
+    const titleText = label || previewSrc;
+    title.textContent = total > 1
+      ? `${titleText} (${state.galleryIndex + 1}/${total})`
+      : titleText;
     zoom.textContent = '100%';
     openImage.href = previewSrc;
 
@@ -645,12 +890,28 @@
     if (!isReadmeImage(img)) return;
 
     const link = img.closest('a[href]');
+
+    if (directOpenLink && link) {
+      try {
+        const linkUrl = new URL(link.href, location.href);
+        if (!hasImageExtension(linkUrl.pathname) && !toRawGitHubImage(link.href)) {
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+
     const previewSrc = resolvePreviewSource(img, link);
     if (!previewSrc) return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    openOverlay(previewSrc, link?.href || '', img.alt || link?.href || previewSrc);
+    const { items, targetIndex } = buildGalleryItemsForTarget(img);
+    state.galleryItems = items;
+    state.galleryIndex = targetIndex;
+
+    openOverlayAtIndex(state.galleryIndex);
   }, true);
 })();

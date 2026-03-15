@@ -3,7 +3,10 @@
   "name": "GitHub README 图片弹层预览",
   "version": "1.0.0",
   "description": "在 GitHub README 中点击图片时直接弹层预览，支持外链 banner、滚轮缩放和拖拽平移。",
-  "permissions": [],
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup.html"
+  },
   "host_permissions": [
     "https://github.com/*"
   ],

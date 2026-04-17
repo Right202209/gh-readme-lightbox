@@ -10,8 +10,14 @@
   const MAX_SCALE = 8;
   const MIN_SCALE_FLOOR = 0.05;
   const MIN_SCALE_RATIO = 0.35;
+  const MIN_IMAGE_DIMENSION = 48;
+  const MIN_IMAGE_AREA = 80 * 80;
+  const COPY_BUTTON_LABEL = '复制图片';
 
   let directOpenLink = false;
+  let copyFeedbackTimer = null;
+  let prevHtmlOverflow = '';
+  let previouslyFocused = null;
 
   chrome.storage.sync.get({ directOpenLink: false }, (result) => {
     directOpenLink = result.directOpenLink;
@@ -36,13 +42,11 @@
     pointerId: null,
     previewSrc: '',
     originalLink: '',
-    originalLabel: '',
     galleryItems: [],
     galleryIndex: 0,
     pointerMode: null,
     pointerStartX: 0,
-    pointerStartY: 0,
-    pointerStartTime: 0
+    pointerStartY: 0
   };
 
   function injectStyle() {
@@ -66,6 +70,10 @@
 
       #${OVERLAY_ID}[hidden] {
         display: none !important;
+      }
+
+      #${OVERLAY_ID}:focus {
+        outline: none;
       }
 
       #${OVERLAY_ID} .ghrl-shell {
@@ -296,10 +304,21 @@
     return candidates.map(normalizeUrl).find(Boolean) || '';
   }
 
+  function hasMeaningfulSize(img) {
+    const rect = img.getBoundingClientRect();
+    const width = rect.width || img.naturalWidth || 0;
+    const height = rect.height || img.naturalHeight || 0;
+    if (width === 0 || height === 0) return true;
+    if (Math.min(width, height) < MIN_IMAGE_DIMENSION) return false;
+    if (width * height < MIN_IMAGE_AREA) return false;
+    return true;
+  }
+
   function isReadmeImage(img) {
     if (!(img instanceof HTMLImageElement)) return false;
     if (!img.closest('article.markdown-body')) return false;
     if (img.closest(`#${OVERLAY_ID}`)) return false;
+    if (!hasMeaningfulSize(img)) return false;
     return true;
   }
 
@@ -489,16 +508,28 @@
     if (stage) stage.classList.remove('is-dragging');
   }
 
-  function copyImage() {
-    const { copy } = getElements();
-    if (!state.previewSrc || !copy) return;
+  function setCopyLabel(text, revertAfter) {
+    const { overlay, copy } = getElements();
+    if (!copy || !overlay || overlay.hidden) return;
 
-    const originalText = copy.textContent;
-
-    function showFeedback(text, duration) {
-      copy.textContent = text;
-      setTimeout(() => { copy.textContent = originalText; }, duration);
+    if (copyFeedbackTimer !== null) {
+      clearTimeout(copyFeedbackTimer);
+      copyFeedbackTimer = null;
     }
+
+    copy.textContent = text;
+
+    if (revertAfter) {
+      copyFeedbackTimer = setTimeout(() => {
+        const { copy: copyBtn } = getElements();
+        if (copyBtn) copyBtn.textContent = COPY_BUTTON_LABEL;
+        copyFeedbackTimer = null;
+      }, revertAfter);
+    }
+  }
+
+  function copyImage() {
+    if (!state.previewSrc) return;
 
     fetch(state.previewSrc)
       .then(res => {
@@ -531,8 +562,8 @@
       .then(pngBlob => navigator.clipboard.write([
         new ClipboardItem({ 'image/png': pngBlob })
       ]))
-      .then(() => showFeedback('已复制', 1500))
-      .catch(() => showFeedback('复制失败', 1500));
+      .then(() => setCopyLabel('已复制', 1500))
+      .catch(() => setCopyLabel('复制失败', 1500));
   }
 
   function toggleBackground() {
@@ -544,11 +575,12 @@
   }
 
   function closeOverlay() {
-    const { overlay, image, loading, error, stage, bgToggle } = getElements();
+    const { overlay, image, loading, error, stage, bgToggle, copy } = getElements();
     if (!overlay) return;
 
     overlay.hidden = true;
-    document.documentElement.style.overflow = '';
+    document.documentElement.style.overflow = prevHtmlOverflow;
+    prevHtmlOverflow = '';
 
     if (stage && state.pointerId !== null) {
       try {
@@ -561,9 +593,14 @@
     if (stage) stage.classList.remove('is-light');
     if (bgToggle) bgToggle.textContent = '浅色背景';
 
+    if (copyFeedbackTimer !== null) {
+      clearTimeout(copyFeedbackTimer);
+      copyFeedbackTimer = null;
+    }
+    if (copy) copy.textContent = COPY_BUTTON_LABEL;
+
     state.previewSrc = '';
     state.originalLink = '';
-    state.originalLabel = '';
     state.naturalWidth = 0;
     state.naturalHeight = 0;
     state.scale = 1;
@@ -573,7 +610,6 @@
     state.pointerMode = null;
     state.pointerStartX = 0;
     state.pointerStartY = 0;
-    state.pointerStartTime = 0;
 
     if (image) {
       image.removeAttribute('src');
@@ -583,6 +619,11 @@
 
     if (loading) loading.hidden = true;
     if (error) error.hidden = true;
+
+    if (previouslyFocused) {
+      previouslyFocused.focus({ preventScroll: true });
+    }
+    previouslyFocused = null;
   }
 
   function ensureOverlay() {
@@ -592,6 +633,10 @@
     overlay = document.createElement('div');
     overlay.id = OVERLAY_ID;
     overlay.hidden = true;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'README 图片预览');
+    overlay.tabIndex = -1;
     overlay.innerHTML = `
       <div class="ghrl-shell">
         <div class="ghrl-stage">
@@ -609,7 +654,7 @@
           <div class="ghrl-actions">
             <a class="ghrl-btn ghrl-open-image" target="_blank" rel="noreferrer noopener">新标签打开图片</a>
             <a class="ghrl-btn ghrl-open-link" target="_blank" rel="noreferrer noopener" hidden>打开原链接</a>
-            <button type="button" class="ghrl-btn ghrl-copy">复制图片</button>
+            <button type="button" class="ghrl-btn ghrl-copy">${COPY_BUTTON_LABEL}</button>
             <button type="button" class="ghrl-btn ghrl-bg-toggle">浅色背景</button>
             <button type="button" class="ghrl-btn ghrl-reset">重置</button>
             <button type="button" class="ghrl-btn ghrl-close">关闭</button>
@@ -636,7 +681,6 @@
 
       state.pointerStartX = event.clientX;
       state.pointerStartY = event.clientY;
-      state.pointerStartTime = Date.now();
 
       const canSwipe =
         state.naturalWidth > 0 &&
@@ -741,6 +785,12 @@
       if (!root || root.hidden) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
+      const target = event.target;
+      if (target && typeof target.closest === 'function' &&
+          target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) {
+        return;
+      }
+
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -825,9 +875,14 @@
     const { overlay, image, loading, error, title, zoom, openImage, openLink } = getElements();
     if (!overlay || !image || !openImage || !openLink || !title || !zoom) return;
 
+    const wasHidden = overlay.hidden;
+    if (wasHidden) {
+      prevHtmlOverflow = document.documentElement.style.overflow;
+      previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+
     state.previewSrc = previewSrc;
     state.originalLink = normalizeUrl(originalLink);
-    state.originalLabel = label;
     state.naturalWidth = 0;
     state.naturalHeight = 0;
     state.scale = 1;
@@ -837,7 +892,6 @@
     state.pointerMode = null;
     state.pointerStartX = 0;
     state.pointerStartY = 0;
-    state.pointerStartTime = 0;
 
     const total = state.galleryItems.length;
     const titleText = label || previewSrc;
@@ -875,6 +929,10 @@
     image.style.height = '0px';
     overlay.hidden = false;
     document.documentElement.style.overflow = 'hidden';
+
+    if (wasHidden) {
+      overlay.focus({ preventScroll: true });
+    }
 
     requestAnimationFrame(function () {
       image.src = previewSrc;

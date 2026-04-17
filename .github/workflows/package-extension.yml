@@ -3,8 +3,12 @@ name: Package extension
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches: [master]
+    tags: ["v*"]
+
+concurrency:
+  group: package-extension-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   package:
@@ -13,6 +17,53 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Determine release tag
+        id: version
+        run: |
+          set -euo pipefail
+          EVENT="${{ github.event_name }}"
+          REF="${{ github.ref }}"
+
+          if [[ "$REF" == refs/tags/v* ]]; then
+            MANIFEST_VERSION=$(node -p "require('./manifest.json').version")
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$MANIFEST_VERSION" != "$TAG_VERSION" ]]; then
+              echo "::error::Tag version ($TAG_VERSION) does not match manifest.json version ($MANIFEST_VERSION)"
+              exit 1
+            fi
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+
+          elif [[ "$EVENT" == "push" && "$REF" == "refs/heads/master" ]]; then
+            VERSION=$(node -p "require('./manifest.json').version")
+            TAG="v$VERSION"
+            PREV=$(git show HEAD~1:manifest.json 2>/dev/null \
+              | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{console.log('')}})" \
+              || echo "")
+            if [[ -z "$PREV" || "$VERSION" == "$PREV" ]]; then
+              echo "manifest.json version unchanged ($VERSION); no release"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG"; then
+              echo "Tag $TAG already exists on remote; no release"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+
+          else
+            echo "workflow_dispatch: packaging only, no release"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Validate required files
         run: |
@@ -20,8 +71,9 @@ jobs:
 
       - name: Set zip name
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "ZIP_NAME=gh-readme-lightbox-${{ github.ref_name }}.zip" >> "$GITHUB_ENV"
+          TAG="${{ steps.version.outputs.tag }}"
+          if [[ -n "$TAG" ]]; then
+            echo "ZIP_NAME=gh-readme-lightbox-${TAG}.zip" >> "$GITHUB_ENV"
           else
             echo "ZIP_NAME=gh-readme-lightbox-${{ github.sha }}.zip" >> "$GITHUB_ENV"
           fi
@@ -40,7 +92,9 @@ jobs:
 
       - name: Generate checksums
         run: |
-          sha256sum "dist/$ZIP_NAME" > dist/SHA256SUMS
+          cd dist
+          sha256sum "$ZIP_NAME" > SHA256SUMS
+          echo "SHA256=$(awk '{print $1}' SHA256SUMS)" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -48,12 +102,46 @@ jobs:
           name: extension-zip
           path: dist/*
 
+      - name: Detect prerelease
+        if: steps.version.outputs.release == 'true'
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
+            echo "PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build release notes
+        if: steps.version.outputs.release == 'true'
+        run: |
+          cat > RELEASE_BODY.md <<EOF
+
+          ---
+
+          ## 安装
+
+          1. 下载 \`${ZIP_NAME}\` 并解压到本地目录。
+          2. 打开 \`chrome://extensions\` 或 \`edge://extensions\`，开启**开发者模式**。
+          3. 点击**加载已解压的扩展程序**，选择解压后的目录。
+
+          ## 校验
+
+          \`\`\`
+          SHA256  ${SHA256}
+          \`\`\`
+          EOF
+
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.version.outputs.release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
+          prerelease: ${{ env.PRERELEASE }}
+          body_path: RELEASE_BODY.md
+          append_body: true
           files: |
             dist/${{ env.ZIP_NAME }}
             dist/SHA256SUMS

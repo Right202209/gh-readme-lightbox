@@ -13,6 +13,9 @@
   const MIN_IMAGE_DIMENSION = 48;
   const MIN_IMAGE_AREA = 80 * 80;
   const COPY_BUTTON_LABEL = '复制图片';
+  // Vertical strip reserved for the toolbar so it never sits on top of the image.
+  const TOOLBAR_GAP = 24;
+  const FALLBACK_RESERVE = 72;
 
   let directOpenLink = false;
   let copyFeedbackTimer = null;
@@ -78,8 +81,8 @@
 
       #${OVERLAY_ID} .ghrl-shell {
         position: relative;
-        width: min(98vw, 1880px);
-        height: min(96vh, 1280px);
+        width: min(100%, 1880px);
+        height: min(100%, 1280px);
       }
 
       #${OVERLAY_ID} .ghrl-stage {
@@ -107,7 +110,7 @@
       #${OVERLAY_ID} .ghrl-content {
         position: absolute;
         left: 50%;
-        top: 50%;
+        top: calc(50% - var(--ghrl-reserve, ${FALLBACK_RESERVE}px) / 2);
         will-change: transform;
       }
 
@@ -150,16 +153,26 @@
       #${OVERLAY_ID} .ghrl-toolbar {
         position: absolute;
         left: 50%;
+        right: auto;
         bottom: 14px;
         transform: translateX(-50%);
+        box-sizing: border-box;
+        /* max-content opts out of the shrink-to-fit cap that "left: 50%" would
+           otherwise impose (available width = half the shell); max-width then
+           keeps the bar inside the shell instead of past the viewport edge. */
+        width: max-content;
+        max-width: calc(100% - 24px);
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 12px;
+        flex-wrap: wrap;
+        gap: 8px 12px;
         color: #f0f6fc;
         font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
         padding: 10px 14px;
-        border-radius: 999px;
+        /* 20px is pixel-identical to 999px on the single-row bar (40px tall),
+           but degrades sanely when the row wraps on narrow viewports. */
+        border-radius: 20px;
         background: rgba(18, 22, 30, 0.18);
         border: 1px solid rgba(255, 255, 255, 0.14);
         box-shadow:
@@ -170,7 +183,9 @@
       }
 
       #${OVERLAY_ID} .ghrl-meta {
-        min-width: min(24vw, 320px);
+        min-width: 0;
+        max-width: min(38vw, 420px);
+        flex: 1 1 min(24vw, 320px);
         display: flex;
         align-items: center;
         gap: 10px;
@@ -178,6 +193,7 @@
       }
 
       #${OVERLAY_ID} .ghrl-title {
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -191,8 +207,9 @@
 
       #${OVERLAY_ID} .ghrl-actions {
         display: flex;
+        flex: 0 1 auto;
         gap: 8px;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
         justify-content: center;
       }
 
@@ -216,24 +233,31 @@
         display: none !important;
       }
 
-      @media (max-width: 768px) {
+      @media (max-width: 1080px) {
         #${OVERLAY_ID} {
           padding: 10px;
+          padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
         }
 
         #${OVERLAY_ID} .ghrl-shell {
-          width: 100vw;
-          height: 100vh;
+          width: 100%;
+          height: 100%;
         }
 
         #${OVERLAY_ID} .ghrl-toolbar {
-          left: 10px;
-          right: 10px;
-          bottom: 10px;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          width: auto;
+          max-width: 100%;
           transform: none;
           justify-content: space-between;
           padding: 10px;
           border-radius: 22px;
+        }
+
+        #${OVERLAY_ID} .ghrl-meta {
+          max-width: 100%;
         }
 
         #${OVERLAY_ID} .ghrl-actions {
@@ -384,6 +408,7 @@
       zoom: overlay?.querySelector('.ghrl-zoom'),
       openImage: overlay?.querySelector('.ghrl-open-image'),
       openLink: overlay?.querySelector('.ghrl-open-link'),
+      toolbar: overlay?.querySelector('.ghrl-toolbar'),
       copy: overlay?.querySelector('.ghrl-copy'),
       bgToggle: overlay?.querySelector('.ghrl-bg-toggle')
     };
@@ -404,6 +429,34 @@
     image.style.transform = `scale(${state.scale})`;
   }
 
+  function getVerticalReserve() {
+    const { stage, toolbar } = getElements();
+    if (!stage) return FALLBACK_RESERVE;
+
+    const measured = toolbar && toolbar.offsetHeight
+      ? toolbar.offsetHeight + TOOLBAR_GAP
+      : FALLBACK_RESERVE;
+
+    // Never let the toolbar claim more than 60% of the stage on tiny viewports.
+    return Math.min(measured, Math.max(0, stage.clientHeight * 0.6));
+  }
+
+  function syncReserveVar() {
+    const { overlay } = getElements();
+    if (!overlay) return;
+    overlay.style.setProperty('--ghrl-reserve', `${getVerticalReserve()}px`);
+  }
+
+  function getStageBox() {
+    const { stage } = getElements();
+    if (!stage) return { width: 0, height: 0 };
+
+    return {
+      width: stage.clientWidth,
+      height: Math.max(1, stage.clientHeight - getVerticalReserve())
+    };
+  }
+
   function getPanBounds() {
     const { stage } = getElements();
     if (!stage || !state.naturalWidth || !state.naturalHeight) {
@@ -412,10 +465,11 @@
 
     const scaledWidth = state.naturalWidth * state.scale;
     const scaledHeight = state.naturalHeight * state.scale;
+    const box = getStageBox();
 
     return {
-      maxOffsetX: Math.max(0, (scaledWidth - stage.clientWidth) / 2),
-      maxOffsetY: Math.max(0, (scaledHeight - stage.clientHeight) / 2)
+      maxOffsetX: Math.max(0, (scaledWidth - box.width) / 2),
+      maxOffsetY: Math.max(0, (scaledHeight - box.height) / 2)
     };
   }
 
@@ -450,9 +504,12 @@
     const { stage, image } = getElements();
     if (!stage || !image || !state.naturalWidth || !state.naturalHeight) return;
 
+    syncReserveVar();
+
+    const box = getStageBox();
     const fitScale = Math.min(
-      stage.clientWidth / state.naturalWidth,
-      stage.clientHeight / state.naturalHeight,
+      box.width / state.naturalWidth,
+      box.height / state.naturalHeight,
       1
     );
 
@@ -472,7 +529,7 @@
     const clampedScale = Math.min(MAX_SCALE, Math.max(minScale, nextScale));
     const rect = stage.getBoundingClientRect();
     const localX = clientX - rect.left - rect.width / 2;
-    const localY = clientY - rect.top - rect.height / 2;
+    const localY = clientY - rect.top - (rect.height - getVerticalReserve()) / 2;
 
     const ratio = clampedScale / state.scale;
     state.offsetX = localX - (localX - state.offsetX) * ratio;
@@ -809,7 +866,7 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         const rect = stage.getBoundingClientRect();
-        zoomBy(1, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        zoomBy(1, rect.left + rect.width / 2, rect.top + (rect.height - getVerticalReserve()) / 2);
         return;
       }
 
@@ -817,7 +874,7 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         const rect = stage.getBoundingClientRect();
-        zoomBy(-1, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        zoomBy(-1, rect.left + rect.width / 2, rect.top + (rect.height - getVerticalReserve()) / 2);
         return;
       }
 

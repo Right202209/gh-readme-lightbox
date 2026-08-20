@@ -9,12 +9,20 @@
       box-sizing: border-box;
     }
 
+    html {
+      color-scheme: dark;
+      background: #12161e;
+    }
+
     body {
       width: 300px;
+      /* Yields to a vertical scrollbar instead of overflowing horizontally
+         if the panel ever exceeds Chrome's 600px popup height. */
+      max-width: 100%;
       padding: 20px;
       font: 14px/1.6 ui-sans-serif, system-ui, sans-serif;
       color: #f0f6fc;
-      background: rgba(18, 22, 30, 0.96);
+      background: #12161e;
     }
 
     h1 {

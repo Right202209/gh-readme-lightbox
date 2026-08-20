@@ -20,18 +20,43 @@
   const TOOLBAR_GAP = 24;
   const FALLBACK_RESERVE = 72;
 
+  // Backdrop strength steps, from the default frosted look down to a fully
+  // transparent backdrop that leaves the page behind readable. `dim` is the
+  // alpha of the darkening layer, `blur`/`sat` drive the backdrop-filter.
+  const BG_LEVELS = [
+    { label: '强', blur: 22, sat: 1.1, dim: 0.42, tint: 0.1 },
+    { label: '中', blur: 12, sat: 1.06, dim: 0.28, tint: 0.07 },
+    { label: '弱', blur: 5, sat: 1.03, dim: 0.14, tint: 0.04 },
+    { label: '关', blur: 0, sat: 1, dim: 0, tint: 0 }
+  ];
+  const DEFAULT_BG_LEVEL = 0;
+  const BG_LEVEL_KEY = 'backgroundLevel';
+  const BG_PERSIST_DELAY = 250;
+  const BG_BUTTON_HINT = '调整背景模糊/不透明度 (B 循环，Shift+B 反向)';
+
   let directOpenLink = false;
+  let backgroundLevel = DEFAULT_BG_LEVEL;
+  let bgPersistTimer = null;
   let copyFeedbackTimer = null;
   let prevHtmlOverflow = '';
   let previouslyFocused = null;
 
-  chrome.storage.sync.get({ directOpenLink: false }, (result) => {
-    directOpenLink = result.directOpenLink;
-  });
+  chrome.storage.sync.get(
+    { directOpenLink: false, [BG_LEVEL_KEY]: DEFAULT_BG_LEVEL },
+    (result) => {
+      directOpenLink = result.directOpenLink;
+      backgroundLevel = clampBackgroundLevel(result[BG_LEVEL_KEY]);
+      applyBackgroundLevel();
+    }
+  );
 
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.directOpenLink) {
       directOpenLink = changes.directOpenLink.newValue;
+    }
+    if (changes[BG_LEVEL_KEY]) {
+      backgroundLevel = clampBackgroundLevel(changes[BG_LEVEL_KEY].newValue);
+      applyBackgroundLevel();
     }
   });
 
@@ -90,11 +115,15 @@
         justify-content: center;
         padding: 24px;
         background:
-          radial-gradient(120% 90% at 50% 0%, rgba(88, 166, 255, 0.10), transparent 60%),
-          rgba(8, 11, 17, 0.42);
-        backdrop-filter: blur(22px) saturate(1.1);
-        -webkit-backdrop-filter: blur(22px) saturate(1.1);
+          radial-gradient(120% 90% at 50% 0%, rgba(88, 166, 255, var(--ghrl-bg-tint, 0.10)), transparent 60%),
+          rgba(8, 11, 17, var(--ghrl-bg-dim, 0.42));
+        backdrop-filter: blur(var(--ghrl-bg-blur, 22px)) saturate(var(--ghrl-bg-sat, 1.1));
+        -webkit-backdrop-filter: blur(var(--ghrl-bg-blur, 22px)) saturate(var(--ghrl-bg-sat, 1.1));
         animation: ghrl-fade-in 0.18s ease-out;
+        transition:
+          background 0.2s ease,
+          backdrop-filter 0.2s ease,
+          -webkit-backdrop-filter 0.2s ease;
       }
 
       #${OVERLAY_ID}[hidden] {
@@ -123,11 +152,6 @@
         touch-action: none;
         cursor: grab;
         user-select: none;
-      }
-
-      #${OVERLAY_ID} .ghrl-stage.is-light {
-        background: rgba(255, 255, 255, 0.9);
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
       }
 
       #${OVERLAY_ID} .ghrl-stage.is-dragging {
@@ -440,6 +464,7 @@
           animation: none;
         }
 
+        #${OVERLAY_ID},
         #${OVERLAY_ID} .ghrl-btn,
         #${OVERLAY_ID} .ghrl-nav {
           transition: none;
@@ -625,7 +650,7 @@
       openLink: overlay?.querySelector('.ghrl-open-link'),
       toolbar: overlay?.querySelector('.ghrl-toolbar'),
       copy: overlay?.querySelector('.ghrl-copy'),
-      bgToggle: overlay?.querySelector('.ghrl-bg-toggle'),
+      bgBlur: overlay?.querySelector('.ghrl-bg-blur'),
       prev: overlay?.querySelector('.ghrl-prev'),
       next: overlay?.querySelector('.ghrl-next')
     };
@@ -871,16 +896,55 @@
       .catch(() => setCopyLabel('复制失败', 1500));
   }
 
-  function toggleBackground() {
-    const { stage, bgToggle } = getElements();
-    if (!stage || !bgToggle) return;
+  function clampBackgroundLevel(value) {
+    const index = Number(value);
+    if (!Number.isFinite(index)) return DEFAULT_BG_LEVEL;
+    return Math.min(BG_LEVELS.length - 1, Math.max(0, Math.round(index)));
+  }
 
-    stage.classList.toggle('is-light');
-    bgToggle.textContent = stage.classList.contains('is-light') ? '深色背景' : '浅色背景';
+  function applyBackgroundLevel() {
+    const { overlay, bgBlur } = getElements();
+    const level = BG_LEVELS[backgroundLevel];
+    if (!level) return;
+
+    if (overlay) {
+      overlay.style.setProperty('--ghrl-bg-blur', `${level.blur}px`);
+      overlay.style.setProperty('--ghrl-bg-sat', String(level.sat));
+      overlay.style.setProperty('--ghrl-bg-dim', String(level.dim));
+      overlay.style.setProperty('--ghrl-bg-tint', String(level.tint));
+    }
+
+    if (bgBlur) {
+      bgBlur.textContent = `背景模糊 · ${level.label}`;
+      bgBlur.setAttribute(
+        'aria-label',
+        `背景模糊：${level.label}（${backgroundLevel + 1}/${BG_LEVELS.length}），点击切换下一档`
+      );
+    }
+  }
+
+  // chrome.storage.sync throttles writes, so rapid clicking must not issue one
+  // write per click.
+  function persistBackgroundLevel() {
+    if (bgPersistTimer !== null) clearTimeout(bgPersistTimer);
+    bgPersistTimer = setTimeout(() => {
+      bgPersistTimer = null;
+      try {
+        chrome.storage.sync.set({ [BG_LEVEL_KEY]: backgroundLevel });
+      } catch {}
+    }, BG_PERSIST_DELAY);
+  }
+
+  function stepBackgroundLevel(direction) {
+    const count = BG_LEVELS.length;
+    const step = direction < 0 ? -1 : 1;
+    backgroundLevel = (backgroundLevel + step + count) % count;
+    applyBackgroundLevel();
+    persistBackgroundLevel();
   }
 
   function closeOverlay() {
-    const { overlay, image, loading, error, stage, bgToggle, copy } = getElements();
+    const { overlay, image, loading, error, stage, copy } = getElements();
     if (!overlay) return;
 
     overlay.hidden = true;
@@ -894,9 +958,6 @@
     }
 
     stopDragging();
-
-    if (stage) stage.classList.remove('is-light');
-    if (bgToggle) bgToggle.textContent = '浅色背景';
 
     if (copyFeedbackTimer !== null) {
       clearTimeout(copyFeedbackTimer);
@@ -970,7 +1031,7 @@
             <a class="ghrl-btn ghrl-open-image" target="_blank" rel="noreferrer noopener">新标签打开图片</a>
             <a class="ghrl-btn ghrl-open-link" target="_blank" rel="noreferrer noopener" hidden>打开原链接</a>
             <button type="button" class="ghrl-btn ghrl-copy">${COPY_BUTTON_LABEL}</button>
-            <button type="button" class="ghrl-btn ghrl-bg-toggle">浅色背景</button>
+            <button type="button" class="ghrl-btn ghrl-bg-blur" title="${BG_BUTTON_HINT}">背景模糊 · ${BG_LEVELS[DEFAULT_BG_LEVEL].label}</button>
             <button type="button" class="ghrl-btn ghrl-reset">重置</button>
             <button type="button" class="ghrl-btn ghrl-close">关闭</button>
           </div>
@@ -1129,7 +1190,9 @@
 
     overlay.querySelector('.ghrl-reset').addEventListener('click', resetView);
     overlay.querySelector('.ghrl-copy').addEventListener('click', copyImage);
-    overlay.querySelector('.ghrl-bg-toggle').addEventListener('click', toggleBackground);
+    overlay.querySelector('.ghrl-bg-blur').addEventListener('click', function () {
+      stepBackgroundLevel(1);
+    });
 
     const prevButton = overlay.querySelector('.ghrl-prev');
     const nextButton = overlay.querySelector('.ghrl-next');
@@ -1191,7 +1254,7 @@
       if (event.key === 'b' || event.key === 'B') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        toggleBackground();
+        stepBackgroundLevel(event.shiftKey ? -1 : 1);
         return;
       }
 
@@ -1225,6 +1288,9 @@
     });
 
     document.documentElement.appendChild(overlay);
+    // The stored level may have loaded before the overlay existed, so sync the
+    // backdrop variables and the button label now that it is in the DOM.
+    applyBackgroundLevel();
     return overlay;
   }
 

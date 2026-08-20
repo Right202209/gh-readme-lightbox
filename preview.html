@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub README Lightbox — 样式预览</title>
+  <style>
+    /* ---------------------------------------------------------------
+       Mock page behind the overlay — preview scaffolding only, this is
+       not part of the extension. The overlay CSS below mirrors the
+       stylesheet injected by content.js; keep the two in sync.
+       --------------------------------------------------------------- */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      padding: 48px 24px 120px;
+      font: 15px/1.7 ui-sans-serif, system-ui, sans-serif;
+      color: #e6edf3;
+      background: #0d1117;
+    }
+
+    .page {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    .page h1 { font-size: 24px; margin-bottom: 8px; }
+    .page p { color: #8b949e; margin-bottom: 24px; }
+
+    .panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 16px;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      background: #161b22;
+    }
+
+    .panel button {
+      padding: 8px 14px;
+      font: inherit;
+      font-size: 13px;
+      color: #e6edf3;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .panel button:hover { background: #30363d; }
+    .panel button[aria-pressed="true"] { background: #1f6feb; border-color: #1f6feb; }
+
+    .hint { margin-top: 20px; font-size: 13px; color: #8b949e; }
+    .hint code { color: #e6edf3; background: #161b22; padding: 1px 6px; border-radius: 4px; }
+
+    /* Simulates a narrow viewport without resizing the window. */
+    body.is-narrow #__gh_readme_lightbox_overlay {
+      left: 50%;
+      right: auto;
+      width: 420px;
+      transform: translateX(-50%);
+      border-left: 1px dashed #30363d;
+      border-right: 1px dashed #30363d;
+    }
+
+    /* The real mobile layout is driven by a viewport media query, which a
+       narrowed box inside a wide window would not trigger — so the same rules
+       are mirrored here for the 420px simulation. */
+    body.is-narrow #__gh_readme_lightbox_overlay { padding: 10px; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-shell { width: 100%; height: 100%; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-toolbar {
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: auto;
+      max-width: 100%;
+      transform: none;
+      justify-content: space-between;
+      padding: 10px;
+      border-radius: 22px;
+    }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-meta { max-width: 100%; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-actions { justify-content: flex-end; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-nav { width: 38px; height: 38px; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-nav svg { width: 19px; height: 19px; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-prev { left: 6px; }
+    body.is-narrow #__gh_readme_lightbox_overlay .ghrl-next { right: 6px; }
+
+    /* =============================================================
+       Overlay styles — mirrored from content.js injectStyle()
+       ============================================================= */
+    @keyframes ghrl-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes ghrl-pop-in {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes ghrl-rise-in {
+      from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    @keyframes ghrl-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #__gh_readme_lightbox_overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483647;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background:
+        radial-gradient(120% 90% at 50% 0%, rgba(88, 166, 255, 0.10), transparent 60%),
+        rgba(8, 11, 17, 0.42);
+      backdrop-filter: blur(22px) saturate(1.1);
+      -webkit-backdrop-filter: blur(22px) saturate(1.1);
+      animation: ghrl-fade-in 0.18s ease-out;
+    }
+
+    #__gh_readme_lightbox_overlay[hidden] { display: none !important; }
+    #__gh_readme_lightbox_overlay:focus { outline: none; }
+
+    #__gh_readme_lightbox_overlay .ghrl-shell {
+      position: relative;
+      width: min(100%, 1880px);
+      height: min(100%, 1280px);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 28px;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      touch-action: none;
+      cursor: grab;
+      user-select: none;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-stage.is-light {
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-stage.is-dragging { cursor: grabbing; }
+
+    #__gh_readme_lightbox_overlay .ghrl-content {
+      position: absolute;
+      left: 50%;
+      top: calc(50% - var(--ghrl-reserve, 72px) / 2);
+      transform: translate(-50%, -50%);
+      will-change: transform;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-image {
+      display: block;
+      max-width: none;
+      max-height: none;
+      transform-origin: center center;
+      will-change: transform;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+      border-radius: 18px;
+      animation: ghrl-fade-in 0.24s ease-out;
+      box-shadow:
+        0 30px 90px rgba(0, 0, 0, 0.42),
+        0 10px 30px rgba(0, 0, 0, 0.24),
+        0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-loading,
+    #__gh_readme_lightbox_overlay .ghrl-error {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: #f0f6fc;
+      font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      background: rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-radius: 18px;
+      animation: ghrl-fade-in 0.2s ease-out;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-loading::before {
+      content: '';
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 2px solid rgba(240, 246, 252, 0.25);
+      border-top-color: #58a6ff;
+      animation: ghrl-spin 0.7s linear infinite;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-error { color: #ffb4ab; }
+
+    #__gh_readme_lightbox_overlay .ghrl-error[hidden],
+    #__gh_readme_lightbox_overlay .ghrl-loading[hidden] { display: none !important; }
+
+    #__gh_readme_lightbox_overlay .ghrl-toolbar {
+      position: absolute;
+      left: 50%;
+      right: auto;
+      bottom: 14px;
+      transform: translateX(-50%);
+      box-sizing: border-box;
+      width: max-content;
+      max-width: calc(100% - 24px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      color: #f0f6fc;
+      font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+      padding: 10px 14px;
+      border-radius: 20px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+        rgba(16, 20, 28, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow:
+        0 18px 44px rgba(0, 0, 0, 0.38),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      animation: ghrl-rise-in 0.24s ease-out;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-meta {
+      min-width: 0;
+      max-width: min(38vw, 420px);
+      flex: 1 1 min(24vw, 320px);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      overflow: hidden;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0.96;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-zoom {
+      flex: none;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      color: #cbd5e1;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-actions {
+      display: flex;
+      flex: 0 1 auto;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-btn {
+      border: 1px solid rgba(240, 246, 252, 0.16);
+      background: rgba(255, 255, 255, 0.08);
+      color: #f0f6fc;
+      border-radius: 999px;
+      padding: 8px 14px;
+      text-decoration: none;
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      white-space: nowrap;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(240, 246, 252, 0.3);
+      transform: translateY(-1px);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-btn:active {
+      transform: translateY(0);
+      background: rgba(255, 255, 255, 0.22);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-btn:focus-visible,
+    #__gh_readme_lightbox_overlay .ghrl-nav:focus-visible {
+      outline: 2px solid #58a6ff;
+      outline-offset: 2px;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-close {
+      background: rgba(248, 113, 113, 0.16);
+      border-color: rgba(248, 113, 113, 0.32);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-close:hover {
+      background: rgba(248, 113, 113, 0.28);
+      border-color: rgba(248, 113, 113, 0.5);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-btn[hidden] { display: none !important; }
+
+    #__gh_readme_lightbox_overlay .ghrl-nav {
+      position: absolute;
+      top: calc(50% - var(--ghrl-reserve, 72px) / 2);
+      transform: translateY(-50%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 46px;
+      height: 46px;
+      padding: 0;
+      color: #f0f6fc;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+        rgba(16, 20, 28, 0.55);
+      box-shadow:
+        0 18px 44px rgba(0, 0, 0, 0.38),
+        inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      cursor: pointer;
+      transition: background 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-nav[hidden] { display: none !important; }
+
+    #__gh_readme_lightbox_overlay .ghrl-nav:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.24);
+      transform: translateY(-50%) scale(1.06);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-nav:active:not(:disabled) {
+      transform: translateY(-50%) scale(0.98);
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-nav:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-nav svg {
+      width: 22px;
+      height: 22px;
+      pointer-events: none;
+    }
+
+    #__gh_readme_lightbox_overlay .ghrl-prev { left: 14px; }
+    #__gh_readme_lightbox_overlay .ghrl-next { right: 14px; }
+
+    @media (max-width: 1080px) {
+      #__gh_readme_lightbox_overlay {
+        padding: 10px;
+        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+      }
+
+      #__gh_readme_lightbox_overlay .ghrl-shell { width: 100%; height: 100%; }
+
+      #__gh_readme_lightbox_overlay .ghrl-toolbar {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-width: 100%;
+        transform: none;
+        justify-content: space-between;
+        padding: 10px;
+        border-radius: 22px;
+      }
+
+      #__gh_readme_lightbox_overlay .ghrl-meta { max-width: 100%; }
+      #__gh_readme_lightbox_overlay .ghrl-actions { flex-wrap: wrap; justify-content: flex-end; }
+      #__gh_readme_lightbox_overlay .ghrl-btn { text-align: center; }
+      #__gh_readme_lightbox_overlay .ghrl-nav { width: 38px; height: 38px; }
+      #__gh_readme_lightbox_overlay .ghrl-nav svg { width: 19px; height: 19px; }
+      #__gh_readme_lightbox_overlay .ghrl-prev { left: 6px; }
+      #__gh_readme_lightbox_overlay .ghrl-next { right: 6px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #__gh_readme_lightbox_overlay,
+      #__gh_readme_lightbox_overlay .ghrl-image,
+      #__gh_readme_lightbox_overlay .ghrl-toolbar,
+      #__gh_readme_lightbox_overlay .ghrl-loading,
+      #__gh_readme_lightbox_overlay .ghrl-error {
+        animation: none;
+      }
+
+      #__gh_readme_lightbox_overlay .ghrl-btn,
+      #__gh_readme_lightbox_overlay .ghrl-nav { transition: none; }
+      #__gh_readme_lightbox_overlay .ghrl-loading::before { animation-duration: 2s; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>GitHub README Lightbox — 样式预览</h1>
+    <p>此页面用于离线预览灯箱（overlay）的视觉效果，不依赖扩展运行环境。</p>
+
+    <div class="panel">
+      <button type="button" data-action="toggle-overlay" aria-pressed="true">显示 / 隐藏灯箱</button>
+      <button type="button" data-action="state-image" aria-pressed="true">图片状态</button>
+      <button type="button" data-action="state-loading" aria-pressed="false">加载中</button>
+      <button type="button" data-action="state-error" aria-pressed="false">加载失败</button>
+      <button type="button" data-action="toggle-light" aria-pressed="false">浅色舞台</button>
+      <button type="button" data-action="toggle-nav" aria-pressed="true">画廊箭头</button>
+      <button type="button" data-action="toggle-narrow" aria-pressed="false">窄屏（420px）</button>
+    </div>
+
+    <p class="hint">
+      提示：修改 <code>content.js</code> 中 <code>injectStyle()</code> 的样式后，请同步更新本文件的样式块。
+    </p>
+  </div>
+
+  <div id="__gh_readme_lightbox_overlay" role="dialog" aria-modal="true" aria-label="README 图片预览" tabindex="-1">
+    <div class="ghrl-shell">
+      <div class="ghrl-stage">
+        <div class="ghrl-content">
+          <img class="ghrl-image" src="prtSc.png" alt="README 预览图" draggable="false">
+        </div>
+        <div class="ghrl-loading" hidden>图片加载中...</div>
+        <div class="ghrl-error" hidden>图片加载失败，可尝试新标签打开。</div>
+      </div>
+      <button type="button" class="ghrl-nav ghrl-prev" aria-label="上一张" title="上一张 (←)" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
+      </button>
+      <button type="button" class="ghrl-nav ghrl-next" aria-label="下一张" title="下一张 (→)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+      <div class="ghrl-toolbar">
+        <div class="ghrl-meta">
+          <div class="ghrl-title">screenshot-of-the-extension-in-action.png (1/3)</div>
+          <div class="ghrl-zoom">100%</div>
+        </div>
+        <div class="ghrl-actions">
+          <a class="ghrl-btn ghrl-open-image" href="#">新标签打开图片</a>
+          <a class="ghrl-btn ghrl-open-link" href="#">打开原链接</a>
+          <button type="button" class="ghrl-btn ghrl-copy">复制图片</button>
+          <button type="button" class="ghrl-btn ghrl-bg-toggle">浅色背景</button>
+          <button type="button" class="ghrl-btn ghrl-reset">重置</button>
+          <button type="button" class="ghrl-btn ghrl-close">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const overlay = document.getElementById('__gh_readme_lightbox_overlay');
+      const stage = overlay.querySelector('.ghrl-stage');
+      const content = overlay.querySelector('.ghrl-content');
+      const image = overlay.querySelector('.ghrl-image');
+      const loading = overlay.querySelector('.ghrl-loading');
+      const error = overlay.querySelector('.ghrl-error');
+      const navButtons = overlay.querySelectorAll('.ghrl-nav');
+      const panel = document.querySelector('.panel');
+
+      // Roughly what fitImageToStage() computes at runtime, so the preview
+      // shows the image at a realistic "fit" size instead of full resolution.
+      function fitImage() {
+        if (!image.naturalWidth) return;
+        const reserve = 72;
+        const boxWidth = stage.clientWidth;
+        const boxHeight = Math.max(1, stage.clientHeight - reserve);
+        const scale = Math.min(boxWidth / image.naturalWidth, boxHeight / image.naturalHeight, 1);
+        image.style.width = image.naturalWidth + 'px';
+        image.style.height = image.naturalHeight + 'px';
+        image.style.transform = 'scale(' + scale + ')';
+        overlay.querySelector('.ghrl-zoom').textContent = Math.round(scale * 100) + '%';
+      }
+
+      image.addEventListener('load', fitImage);
+      window.addEventListener('resize', fitImage);
+      if (image.complete) fitImage();
+
+      function setPressed(action, value) {
+        const button = panel.querySelector('[data-action="' + action + '"]');
+        if (button) button.setAttribute('aria-pressed', String(value));
+      }
+
+      function showState(which) {
+        content.hidden = which !== 'image';
+        loading.hidden = which !== 'loading';
+        error.hidden = which !== 'error';
+        setPressed('state-image', which === 'image');
+        setPressed('state-loading', which === 'loading');
+        setPressed('state-error', which === 'error');
+      }
+
+      const actions = {
+        'toggle-overlay': () => {
+          overlay.hidden = !overlay.hidden;
+          setPressed('toggle-overlay', !overlay.hidden);
+          if (!overlay.hidden) fitImage();
+        },
+        'state-image': () => showState('image'),
+        'state-loading': () => showState('loading'),
+        'state-error': () => showState('error'),
+        'toggle-light': () => {
+          const light = stage.classList.toggle('is-light');
+          setPressed('toggle-light', light);
+          overlay.querySelector('.ghrl-bg-toggle').textContent = light ? '深色背景' : '浅色背景';
+        },
+        'toggle-nav': () => {
+          const hide = !navButtons[0].hidden;
+          navButtons.forEach(button => { button.hidden = hide; });
+          setPressed('toggle-nav', !hide);
+        },
+        'toggle-narrow': () => {
+          const narrow = document.body.classList.toggle('is-narrow');
+          setPressed('toggle-narrow', narrow);
+          fitImage();
+        }
+      };
+
+      panel.addEventListener('click', event => {
+        const button = event.target.closest('[data-action]');
+        if (!button) return;
+        actions[button.dataset.action]?.();
+      });
+
+      overlay.querySelector('.ghrl-close').addEventListener('click', actions['toggle-overlay']);
+      overlay.querySelector('.ghrl-bg-toggle').addEventListener('click', actions['toggle-light']);
+    })();
+  </script>
+</body>
+</html>

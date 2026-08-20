@@ -62,6 +62,25 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
+      @keyframes ghrl-fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
+      @keyframes ghrl-pop-in {
+        from { opacity: 0; transform: scale(0.96); }
+        to { opacity: 1; transform: scale(1); }
+      }
+
+      @keyframes ghrl-rise-in {
+        from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+        to { opacity: 1; transform: translateX(-50%) translateY(0); }
+      }
+
+      @keyframes ghrl-spin {
+        to { transform: rotate(360deg); }
+      }
+
       #${OVERLAY_ID} {
         position: fixed;
         inset: 0;
@@ -70,9 +89,12 @@
         align-items: center;
         justify-content: center;
         padding: 24px;
-        background: rgba(10, 14, 20, 0.1);
-        backdrop-filter: blur(20px) saturate(1.08);
-        -webkit-backdrop-filter: blur(20px) saturate(1.08);
+        background:
+          radial-gradient(120% 90% at 50% 0%, rgba(88, 166, 255, 0.10), transparent 60%),
+          rgba(8, 11, 17, 0.42);
+        backdrop-filter: blur(22px) saturate(1.1);
+        -webkit-backdrop-filter: blur(22px) saturate(1.1);
+        animation: ghrl-fade-in 0.18s ease-out;
       }
 
       #${OVERLAY_ID}[hidden] {
@@ -104,7 +126,8 @@
       }
 
       #${OVERLAY_ID} .ghrl-stage.is-light {
-        background: rgba(255, 255, 255, 0.85);
+        background: rgba(255, 255, 255, 0.9);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
       }
 
       #${OVERLAY_ID} .ghrl-stage.is-dragging {
@@ -128,9 +151,13 @@
         user-select: none;
         -webkit-user-drag: none;
         border-radius: 18px;
+        /* Only opacity is animated here — transform is owned by the zoom/pan
+           state and would fight a keyframed scale. */
+        animation: ghrl-fade-in 0.24s ease-out;
         box-shadow:
-          0 24px 80px rgba(0, 0, 0, 0.18),
-          0 10px 30px rgba(0, 0, 0, 0.1);
+          0 30px 90px rgba(0, 0, 0, 0.42),
+          0 10px 30px rgba(0, 0, 0, 0.24),
+          0 0 0 1px rgba(255, 255, 255, 0.08);
       }
 
       #${OVERLAY_ID} .ghrl-loading,
@@ -140,6 +167,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
+        gap: 10px;
         color: #f0f6fc;
         font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
         letter-spacing: 0.02em;
@@ -147,6 +175,21 @@
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         border-radius: 18px;
+        animation: ghrl-fade-in 0.2s ease-out;
+      }
+
+      #${OVERLAY_ID} .ghrl-loading::before {
+        content: '';
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 2px solid rgba(240, 246, 252, 0.25);
+        border-top-color: #58a6ff;
+        animation: ghrl-spin 0.7s linear infinite;
+      }
+
+      #${OVERLAY_ID} .ghrl-error {
+        color: #ffb4ab;
       }
 
       #${OVERLAY_ID} .ghrl-error[hidden],
@@ -177,13 +220,16 @@
         /* 20px is pixel-identical to 999px on the single-row bar (40px tall),
            but degrades sanely when the row wraps on narrow viewports. */
         border-radius: 20px;
-        background: rgba(18, 22, 30, 0.18);
-        border: 1px solid rgba(255, 255, 255, 0.14);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+          rgba(16, 20, 28, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.16);
         box-shadow:
-          0 12px 34px rgba(0, 0, 0, 0.12),
-          inset 0 1px 0 rgba(255, 255, 255, 0.12);
-        backdrop-filter: blur(16px) saturate(1.12);
-        -webkit-backdrop-filter: blur(16px) saturate(1.12);
+          0 18px 44px rgba(0, 0, 0, 0.38),
+          inset 0 1px 0 rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(18px) saturate(1.2);
+        -webkit-backdrop-filter: blur(18px) saturate(1.2);
+        animation: ghrl-rise-in 0.24s ease-out;
       }
 
       #${OVERLAY_ID} .ghrl-meta {
@@ -206,7 +252,14 @@
 
       #${OVERLAY_ID} .ghrl-zoom {
         flex: none;
-        opacity: 0.82;
+        padding: 2px 9px;
+        border-radius: 999px;
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+        color: #cbd5e1;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.1);
       }
 
       #${OVERLAY_ID} .ghrl-actions {
@@ -218,23 +271,109 @@
       }
 
       #${OVERLAY_ID} .ghrl-btn {
-        border: 1px solid rgba(240, 246, 252, 0.18);
+        border: 1px solid rgba(240, 246, 252, 0.16);
         background: rgba(255, 255, 255, 0.08);
         color: #f0f6fc;
         border-radius: 999px;
-        padding: 8px 13px;
+        padding: 8px 14px;
         text-decoration: none;
         cursor: pointer;
         font: inherit;
+        font-size: 13px;
         white-space: nowrap;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
       }
 
       #${OVERLAY_ID} .ghrl-btn:hover {
-        background: rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.16);
+        border-color: rgba(240, 246, 252, 0.3);
+        transform: translateY(-1px);
+      }
+
+      #${OVERLAY_ID} .ghrl-btn:active {
+        transform: translateY(0);
+        background: rgba(255, 255, 255, 0.22);
+      }
+
+      #${OVERLAY_ID} .ghrl-btn:focus-visible,
+      #${OVERLAY_ID} .ghrl-nav:focus-visible {
+        outline: 2px solid #58a6ff;
+        outline-offset: 2px;
+      }
+
+      #${OVERLAY_ID} .ghrl-close {
+        background: rgba(248, 113, 113, 0.16);
+        border-color: rgba(248, 113, 113, 0.32);
+      }
+
+      #${OVERLAY_ID} .ghrl-close:hover {
+        background: rgba(248, 113, 113, 0.28);
+        border-color: rgba(248, 113, 113, 0.5);
       }
 
       #${OVERLAY_ID} .ghrl-btn[hidden] {
         display: none !important;
+      }
+
+      /* Vertically aligned with .ghrl-content so the arrows track the image
+         centre rather than the stage centre. */
+      #${OVERLAY_ID} .ghrl-nav {
+        position: absolute;
+        top: calc(50% - var(--ghrl-reserve, ${FALLBACK_RESERVE}px) / 2);
+        transform: translateY(-50%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 46px;
+        height: 46px;
+        padding: 0;
+        color: #f0f6fc;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 999px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+          rgba(16, 20, 28, 0.55);
+        box-shadow:
+          0 18px 44px rgba(0, 0, 0, 0.38),
+          inset 0 1px 0 rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(18px) saturate(1.2);
+        -webkit-backdrop-filter: blur(18px) saturate(1.2);
+        cursor: pointer;
+        transition: background 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+      }
+
+      #${OVERLAY_ID} .ghrl-nav[hidden] {
+        display: none !important;
+      }
+
+      #${OVERLAY_ID} .ghrl-nav:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.24);
+        /* translateY(-50%) is the centring transform — it must be repeated here
+           or the arrow jumps to the stage top on hover. */
+        transform: translateY(-50%) scale(1.06);
+      }
+
+      #${OVERLAY_ID} .ghrl-nav:active:not(:disabled) {
+        transform: translateY(-50%) scale(0.98);
+      }
+
+      #${OVERLAY_ID} .ghrl-nav:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+
+      #${OVERLAY_ID} .ghrl-nav svg {
+        width: 22px;
+        height: 22px;
+        pointer-events: none;
+      }
+
+      #${OVERLAY_ID} .ghrl-prev {
+        left: 14px;
+      }
+
+      #${OVERLAY_ID} .ghrl-next {
+        right: 14px;
       }
 
       @media (max-width: 1080px) {
@@ -271,6 +410,43 @@
 
         #${OVERLAY_ID} .ghrl-btn {
           text-align: center;
+        }
+
+        #${OVERLAY_ID} .ghrl-nav {
+          width: 38px;
+          height: 38px;
+        }
+
+        #${OVERLAY_ID} .ghrl-nav svg {
+          width: 19px;
+          height: 19px;
+        }
+
+        #${OVERLAY_ID} .ghrl-prev {
+          left: 6px;
+        }
+
+        #${OVERLAY_ID} .ghrl-next {
+          right: 6px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #${OVERLAY_ID},
+        #${OVERLAY_ID} .ghrl-image,
+        #${OVERLAY_ID} .ghrl-toolbar,
+        #${OVERLAY_ID} .ghrl-loading,
+        #${OVERLAY_ID} .ghrl-error {
+          animation: none;
+        }
+
+        #${OVERLAY_ID} .ghrl-btn,
+        #${OVERLAY_ID} .ghrl-nav {
+          transition: none;
+        }
+
+        #${OVERLAY_ID} .ghrl-loading::before {
+          animation-duration: 2s;
         }
       }
     `;
@@ -398,6 +574,41 @@
     openOverlay(item.previewSrc, item.originalLink, item.label);
   }
 
+  // Navigation is non-looping, so a step past either end is a no-op rather than
+  // a reload of the image already on screen.
+  function stepGallery(delta) {
+    if (state.galleryItems.length < 2) return;
+
+    const nextIndex = state.galleryIndex + delta;
+    if (nextIndex < 0 || nextIndex >= state.galleryItems.length) return;
+
+    openOverlayAtIndex(nextIndex);
+  }
+
+  function updateGalleryNav() {
+    const { prev, next } = getElements();
+    if (!prev || !next) return;
+
+    const total = state.galleryItems.length;
+    const hasGallery = total > 1;
+
+    prev.hidden = !hasGallery;
+    next.hidden = !hasGallery;
+    prev.disabled = !hasGallery || state.galleryIndex <= 0;
+    next.disabled = !hasGallery || state.galleryIndex >= total - 1;
+  }
+
+  function navigateFrom(button, delta) {
+    stepGallery(delta);
+
+    // Reaching an end disables the button under the cursor, which would drop
+    // focus to <body> and take the dialog's keyboard shortcuts with it.
+    if (button.disabled || button.hidden) {
+      const { overlay } = getElements();
+      if (overlay) overlay.focus({ preventScroll: true });
+    }
+  }
+
   function getElements() {
     const overlay = document.getElementById(OVERLAY_ID);
     return {
@@ -414,7 +625,9 @@
       openLink: overlay?.querySelector('.ghrl-open-link'),
       toolbar: overlay?.querySelector('.ghrl-toolbar'),
       copy: overlay?.querySelector('.ghrl-copy'),
-      bgToggle: overlay?.querySelector('.ghrl-bg-toggle')
+      bgToggle: overlay?.querySelector('.ghrl-bg-toggle'),
+      prev: overlay?.querySelector('.ghrl-prev'),
+      next: overlay?.querySelector('.ghrl-next')
     };
   }
 
@@ -495,6 +708,22 @@
       clientX <= rect.right &&
       clientY >= rect.top &&
       clientY <= rect.bottom;
+  }
+
+  function isPointInsideNav(clientX, clientY) {
+    const { prev, next } = getElements();
+
+    return [prev, next].some(button => {
+      if (!button || button.hidden) return false;
+
+      const rect = button.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return false;
+
+      return clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom;
+    });
   }
 
   function clampOffsets() {
@@ -687,6 +916,9 @@
     state.pointerStartX = 0;
     state.pointerStartY = 0;
     state.pointerMoved = false;
+    state.galleryItems = [];
+    state.galleryIndex = 0;
+    updateGalleryNav();
 
     if (image) {
       image.removeAttribute('src');
@@ -723,6 +955,12 @@
           <div class="ghrl-loading" hidden>图片加载中...</div>
           <div class="ghrl-error" hidden>图片加载失败，可尝试新标签打开。</div>
         </div>
+        <button type="button" class="ghrl-nav ghrl-prev" aria-label="上一张" title="上一张 (←)" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
+        </button>
+        <button type="button" class="ghrl-nav ghrl-next" aria-label="下一张" title="下一张 (→)" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
         <div class="ghrl-toolbar">
           <div class="ghrl-meta">
             <div class="ghrl-title"></div>
@@ -759,6 +997,12 @@
 
       // The toolbar is a control surface, not "outside the image".
       if (closest('.ghrl-toolbar')) return;
+
+      // Same for the prev/next arrows, which float over the empty stage area.
+      // A disabled arrow may swallow its own click without dispatching one, so
+      // the region is excluded geometrically as well.
+      if (closest('.ghrl-nav')) return;
+      if (isPointInsideNav(event.clientX, event.clientY)) return;
 
       // Ignore the click that terminates a pan or a swipe.
       if (state.pointerMoved) {
@@ -841,11 +1085,7 @@
         const absDy = Math.abs(dy);
 
         if (absDx >= 70 && absDx >= absDy * 1.2) {
-          if (dx < 0) {
-            openOverlayAtIndex(state.galleryIndex + 1);
-          } else if (dx > 0) {
-            openOverlayAtIndex(state.galleryIndex - 1);
-          }
+          stepGallery(dx < 0 ? 1 : -1);
         }
       }
 
@@ -890,6 +1130,15 @@
     overlay.querySelector('.ghrl-reset').addEventListener('click', resetView);
     overlay.querySelector('.ghrl-copy').addEventListener('click', copyImage);
     overlay.querySelector('.ghrl-bg-toggle').addEventListener('click', toggleBackground);
+
+    const prevButton = overlay.querySelector('.ghrl-prev');
+    const nextButton = overlay.querySelector('.ghrl-next');
+    prevButton.addEventListener('click', function () {
+      navigateFrom(prevButton, -1);
+    });
+    nextButton.addEventListener('click', function () {
+      navigateFrom(nextButton, 1);
+    });
 
     document.addEventListener('keydown', function (event) {
       const root = document.getElementById(OVERLAY_ID);
@@ -949,14 +1198,14 @@
       if (state.galleryItems.length > 1 && event.key === 'ArrowLeft') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        openOverlayAtIndex(state.galleryIndex - 1);
+        stepGallery(-1);
         return;
       }
 
       if (state.galleryItems.length > 1 && event.key === 'ArrowRight') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        openOverlayAtIndex(state.galleryIndex + 1);
+        stepGallery(1);
       }
     }, true);
 
@@ -1011,6 +1260,7 @@
       : titleText;
     zoom.textContent = '100%';
     openImage.href = previewSrc;
+    updateGalleryNav();
 
     let shouldShowOriginalLink = false;
     if (state.originalLink) {

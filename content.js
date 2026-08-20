@@ -12,6 +12,9 @@
   const MIN_SCALE_RATIO = 0.35;
   const MIN_IMAGE_DIMENSION = 48;
   const MIN_IMAGE_AREA = 80 * 80;
+  // A press that travels further than this is a drag/swipe, not a click, so it
+  // must never be mistaken for a "click outside the image" close gesture.
+  const CLICK_MOVE_TOLERANCE = 6;
   const COPY_BUTTON_LABEL = '复制图片';
   // Vertical strip reserved for the toolbar so it never sits on top of the image.
   const TOOLBAR_GAP = 24;
@@ -49,7 +52,8 @@
     galleryIndex: 0,
     pointerMode: null,
     pointerStartX: 0,
-    pointerStartY: 0
+    pointerStartY: 0,
+    pointerMoved: false
   };
 
   function injectStyle() {
@@ -478,6 +482,21 @@
     return maxOffsetX > 0 || maxOffsetY > 0;
   }
 
+  // The image itself is pointer-events:none (the stage owns pan/zoom input), so
+  // hit-testing has to be geometric rather than target-based.
+  function isPointInsideImage(clientX, clientY) {
+    const { image } = getElements();
+    if (!image || !state.naturalWidth || !state.naturalHeight) return false;
+
+    const rect = image.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+
+    return clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom;
+  }
+
   function clampOffsets() {
     const { maxOffsetX, maxOffsetY } = getPanBounds();
 
@@ -667,6 +686,7 @@
     state.pointerMode = null;
     state.pointerStartX = 0;
     state.pointerStartY = 0;
+    state.pointerMoved = false;
 
     if (image) {
       image.removeAttribute('src');
@@ -720,10 +740,35 @@
       </div>
     `;
 
+    // Reset before the stage's own pointerdown so a click that starts on the
+    // padding (outside the stage) never inherits a stale drag flag.
+    overlay.addEventListener('pointerdown', function () {
+      state.pointerMoved = false;
+    }, true);
+
     overlay.addEventListener('click', function (event) {
-      if (event.target === overlay || event.target.classList.contains('ghrl-close')) {
+      const target = event.target;
+      const closest = target && typeof target.closest === 'function'
+        ? selector => target.closest(selector)
+        : () => null;
+
+      if (closest('.ghrl-close')) {
         closeOverlay();
+        return;
       }
+
+      // The toolbar is a control surface, not "outside the image".
+      if (closest('.ghrl-toolbar')) return;
+
+      // Ignore the click that terminates a pan or a swipe.
+      if (state.pointerMoved) {
+        state.pointerMoved = false;
+        return;
+      }
+
+      if (isPointInsideImage(event.clientX, event.clientY)) return;
+
+      closeOverlay();
     });
 
     const { stage, image } = getElementsFromOverlay(overlay);
@@ -738,6 +783,7 @@
 
       state.pointerStartX = event.clientX;
       state.pointerStartY = event.clientY;
+      state.pointerMoved = false;
 
       const canSwipe =
         state.naturalWidth > 0 &&
@@ -763,6 +809,14 @@
 
     stage.addEventListener('pointermove', function (event) {
       if (event.pointerId !== state.pointerId) return;
+
+      if (!state.pointerMoved) {
+        const travelX = Math.abs(event.clientX - state.pointerStartX);
+        const travelY = Math.abs(event.clientY - state.pointerStartY);
+        if (Math.max(travelX, travelY) > CLICK_MOVE_TOLERANCE) {
+          state.pointerMoved = true;
+        }
+      }
 
       if (state.pointerMode === 'pan') {
         if (!state.dragging) return;

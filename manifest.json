@@ -1,19 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "GitHub README 图片弹层预览",
-  "version": "1.0.6",
-  "description": "在 GitHub README 中点击图片时直接弹层预览，支持外链 banner、滚轮缩放和拖拽平移。",
+  "name": "GitHub Markdown 图片弹层预览",
+  "version": "1.0.9",
+  "description": "在 GitHub README、Issue 和评论中点击图片时直接弹层预览，无需打开新标签页。",
   "permissions": ["storage"],
   "action": {
     "default_popup": "popup.html"
   },
   "host_permissions": [
-    "https://github.com/*"
+    "https://github.com/*",
+    "https://private-user-images.githubusercontent.com/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://github.com/*"
+        "https://github.com/*",
+        "https://private-user-images.githubusercontent.com/*"
       ],
       "js": [
         "content.js"

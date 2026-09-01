@@ -543,21 +543,24 @@
     return true;
   }
 
-  function isReadmeImage(img) {
+  function isMarkdownImage(img) {
     if (!(img instanceof HTMLImageElement)) return false;
-    if (!img.closest('article.markdown-body')) return false;
+    // README content is usually an article, while issue bodies and comments
+    // are rendered in other containers. The shared markdown-body class is
+    // the stable boundary for all of them.
+    if (!img.closest('.markdown-body')) return false;
     if (img.closest(`#${OVERLAY_ID}`)) return false;
     if (!hasMeaningfulSize(img)) return false;
     return true;
   }
 
   function buildGalleryItemsForTarget(targetImg) {
-    const images = Array.from(document.querySelectorAll('article.markdown-body img'));
+    const images = Array.from(document.querySelectorAll('.markdown-body img'));
     const items = [];
     let targetIndex = -1;
 
     images.forEach(img => {
-      if (!isReadmeImage(img)) return;
+      if (!isMarkdownImage(img)) return;
 
       const link = img.closest('a[href]');
       const previewSrc = resolvePreviewSource(img, link);
@@ -1005,13 +1008,13 @@
     overlay.hidden = true;
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-label', 'README 图片预览');
+    overlay.setAttribute('aria-label', 'Markdown 图片预览');
     overlay.tabIndex = -1;
     overlay.innerHTML = `
       <div class="ghrl-shell">
         <div class="ghrl-stage">
           <div class="ghrl-content">
-            <img class="ghrl-image" alt="README 预览图" draggable="false">
+            <img class="ghrl-image" alt="Markdown 预览图" draggable="false">
           </div>
           <div class="ghrl-loading" hidden>图片加载中...</div>
           <div class="ghrl-error" hidden>图片加载失败，可尝试新标签打开。</div>
@@ -1372,7 +1375,7 @@
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 
     const img = event.target.closest('img');
-    if (!isReadmeImage(img)) return;
+    if (!isMarkdownImage(img)) return;
 
     const link = img.closest('a[href]');
 
